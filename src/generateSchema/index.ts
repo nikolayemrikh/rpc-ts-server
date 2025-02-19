@@ -77,7 +77,7 @@ const serializeType = (
   return checker.typeToString(type);
 };
 
-export const generateSchema = (projectRoot: string, sourceFilePath: string, tsConfigPath: string): string => {
+export const generateSchema = (tsConfigPath: string, projectRoot: string, sourceFilePath: string): string => {
   if (!sourceFilePath.endsWith('.ts')) {
     throw new Error('Source file must be a .ts file');
   }

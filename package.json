@@ -35,8 +35,16 @@
     "ts-jest": "29.2.5",
     "typescript": "5.7.3"
   },
-  "keywords": ["typescript", "rpc", "server"],
+  "keywords": [
+    "typescript",
+    "rpc",
+    "server"
+  ],
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "hono": "4.7.2",
+    "ts-morph": "25.0.1"
   }
 }

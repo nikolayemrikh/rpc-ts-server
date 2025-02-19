@@ -1,5 +1,2 @@
-
-
-export const greet = (name: string): string => {
-  return `Hello, ${name}!`;
-};
+export { createRPCServer } from './createRPCServer/index.js';
+export { generateSchema } from './generateSchema/index.js';

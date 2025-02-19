@@ -146,17 +146,23 @@ const processMethodType = (
     const propName = prop.getName();
     const currentPath = [...path, propName];
 
+    // Получаем тип без satisfies
+    const resolvedType = checker.getBaseTypeOfLiteralType(propType);
+
     // Проверяем, является ли свойство объектом с методами
     if (
-      propType.getCallSignatures().length === 0 &&
-      (propType.isClassOrInterface() || propType.flags & ts.TypeFlags.Object)
+      resolvedType.getCallSignatures().length === 0 &&
+      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
     ) {
       // Это вложенный объект, рекурсивно обрабатываем его
-      const nestedMethods = processMethodType(propType, checker, sourceFile, indent + 4, collected, currentPath);
-      results.push(`${indentStr}${propName}: {${nestedMethods}\n${indentStr}};`);
+      const nestedMethods = processMethodType(resolvedType, checker, sourceFile, indent + 4, collected, currentPath);
+      if (nestedMethods.trim()) {
+        // Добавляем объект только если в нем есть методы
+        results.push(`${indentStr}${propName}: {${nestedMethods}\n${indentStr}};`);
+      }
     } else {
       // Это метод, обрабатываем его сигнатуру
-      const signatures = propType.getCallSignatures();
+      const signatures = resolvedType.getCallSignatures();
       if (signatures.length > 0) {
         const signature = signatures[0];
         const parameters = signature.getParameters();
@@ -164,7 +170,7 @@ const processMethodType = (
 
         const params = parameters
           .map((param) => {
-            const paramType = checker.getTypeOfSymbolAtLocation(param, prop.valueDeclaration!);
+            const paramType = checker.getTypeOfSymbolAtLocation(param, param.valueDeclaration!);
             return `${param.getName()}: ${checker.typeToString(paramType)}`;
           })
           .join(', ');
@@ -250,16 +256,18 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
   const properties = checker.getPropertiesOfType(rpcMethodsType);
   properties.forEach((prop) => {
     const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
+    const resolvedType = checker.getBaseTypeOfLiteralType(propType);
 
     // Если это вложенный объект, собираем типы из его методов
     if (
-      propType.getCallSignatures().length === 0 &&
-      (propType.isClassOrInterface() || propType.flags & ts.TypeFlags.Object)
+      resolvedType.getCallSignatures().length === 0 &&
+      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
     ) {
-      const nestedProperties = checker.getPropertiesOfType(propType);
+      const nestedProperties = checker.getPropertiesOfType(resolvedType);
       nestedProperties.forEach((nestedProp) => {
         const nestedPropType = checker.getTypeOfSymbolAtLocation(nestedProp, nestedProp.valueDeclaration!);
-        const signatures = nestedPropType.getCallSignatures();
+        const nestedResolvedType = checker.getBaseTypeOfLiteralType(nestedPropType);
+        const signatures = nestedResolvedType.getCallSignatures();
         if (signatures.length > 0) {
           const signature = signatures[0];
           const returnType = signature.getReturnType();
@@ -271,7 +279,7 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
       });
     } else {
       // Обычный метод верхнего уровня
-      const signatures = propType.getCallSignatures();
+      const signatures = resolvedType.getCallSignatures();
       if (signatures.length > 0) {
         const signature = signatures[0];
         const returnType = signature.getReturnType();

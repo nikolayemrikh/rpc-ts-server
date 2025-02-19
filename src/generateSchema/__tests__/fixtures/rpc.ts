@@ -1,7 +1,8 @@
-import { getUser } from './getUser';
+import { getUser } from './authenticated/getUser';
+import { sayHello } from './sayHello';
 
 export const rpcMethods = {
-  sayHello: (name: string) => Promise.resolve(`Hello, ${name}!`),
+  sayHello,
   add: (a: number, b: number) => Promise.resolve(a + b),
   getUser,
 };

@@ -77,7 +77,7 @@ const serializeType = (
   return checker.typeToString(type);
 };
 
-export const generateSchema = (projectRoot: string, sourceFilePath: string): string => {
+export const generateSchema = (projectRoot: string, sourceFilePath: string, tsConfigPath: string): string => {
   if (!sourceFilePath.endsWith('.ts')) {
     throw new Error('Source file must be a .ts file');
   }
@@ -85,21 +85,27 @@ export const generateSchema = (projectRoot: string, sourceFilePath: string): str
   // Ensure paths are absolute
   const absoluteProjectRoot = path.resolve(projectRoot);
   const absoluteSourcePath = path.resolve(sourceFilePath);
+  const absoluteTsConfigPath = path.resolve(tsConfigPath);
 
   // Verify that source file is inside project root
   if (!absoluteSourcePath.startsWith(absoluteProjectRoot)) {
     throw new Error('Source file must be inside project root directory');
   }
 
-  // Create a program
-  const program = ts.createProgram([absoluteSourcePath], {
-    skipLibCheck: true,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    target: ts.ScriptTarget.ES2018,
-    module: ts.ModuleKind.NodeNext,
-    baseUrl: absoluteProjectRoot,
-    rootDir: absoluteProjectRoot,
-  });
+  // Create a program using tsconfig.json
+  const { config, error } = ts.readConfigFile(absoluteTsConfigPath, ts.sys.readFile);
+
+  if (error) {
+    throw new Error(`Failed to read tsconfig.json: ${error.messageText}`);
+  }
+
+  const { options, errors } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(absoluteTsConfigPath));
+
+  if (errors.length > 0) {
+    throw new Error(`Failed to parse tsconfig.json: ${errors[0].messageText}`);
+  }
+
+  const program = ts.createProgram([absoluteSourcePath], options);
 
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(absoluteSourcePath);

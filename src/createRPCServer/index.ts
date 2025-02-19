@@ -19,19 +19,21 @@ export const createRPCServer = (
 
   // Эндпоинт для вызова методов
   app.post('/call', async (c) => {
-    const { method, params } = await c.req.json();
+    const { method, params } = await c.req.json<{ method: string; params: unknown[] }>();
 
     const path = method.split('.');
     let current = rpcMethods;
-    let func: TMethod | undefined;
 
-    for (const p of path) {
-      if (typeof current === 'function') {
-        func = current;
-      } else if (typeof current === 'object') {
-        current = current[p] as IMethods;
+    while (path.length > 1) {
+      const p = path.shift();
+      if (typeof current === 'object') {
+        current = current[p!] as IMethods;
+      } else {
+        return c.json({ error: 'Method not found' }, 404);
       }
     }
+
+    const func = current[path[0]] as TMethod;
 
     if (!func) {
       return c.json({ error: 'Method not found' }, 404);

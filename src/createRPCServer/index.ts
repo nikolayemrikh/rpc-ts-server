@@ -4,10 +4,9 @@ import { generateSchema } from '../generateSchema/index.js';
 export const createRPCServer = (
   projectRoot: string,
   sourceFilePath: string,
+  app: Hono,
   rpcMethods: Record<string, (...args: unknown[]) => Promise<unknown>>
-) => {
-  const app = new Hono();
-
+): void => {
   // Эндпоинт для получения схемы
   app.get('/types', async (c) => {
     const schema = generateSchema(projectRoot, sourceFilePath);
@@ -29,6 +28,4 @@ export const createRPCServer = (
       return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 400);
     }
   });
-
-  return app;
 };

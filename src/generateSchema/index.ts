@@ -1,70 +1,96 @@
-import { execSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import * as ts from 'typescript';
 
-export const generateSchema = (sourceFilePath: string): string => {
+export const generateSchema = (projectRoot: string, sourceFilePath: string): string => {
   if (!sourceFilePath.endsWith('.ts')) {
     throw new Error('Source file must be a .ts file');
   }
 
-  // Create a temporary directory
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rpc-schema-'));
-  const fileName = path.basename(sourceFilePath);
-  const tmpFilePath = path.join(tmpDir, fileName);
+  // Ensure paths are absolute
+  const absoluteProjectRoot = path.resolve(projectRoot);
+  const absoluteSourcePath = path.resolve(sourceFilePath);
 
-  try {
-    // Copy the source file to temp directory
-    fs.copyFileSync(sourceFilePath, tmpFilePath);
-
-    // Create a temporary tsconfig.json
-    const tsConfig = {
-      compilerOptions: {
-        declaration: true,
-        emitDeclarationOnly: true,
-        noEmit: false,
-        skipLibCheck: true,
-        moduleResolution: 'node',
-        target: 'ES2018',
-        module: 'CommonJS',
-        esModuleInterop: true,
-        strict: true,
-      },
-      include: [fileName],
-    };
-
-    fs.writeFileSync(path.join(tmpDir, 'tsconfig.json'), JSON.stringify(tsConfig, null, 2));
-
-    // Find path to local typescript installation
-    const tscPath = require.resolve('typescript/bin/tsc');
-
-    try {
-      // Run local tsc to generate .d.ts with verbose output
-      execSync(`node ${tscPath} --listFiles --verbose`, {
-        cwd: tmpDir,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    } catch (error) {
-      if (error instanceof Error) {
-        throw new Error(
-          `TypeScript compilation failed: ${error.message}\nPlease check if all imports are available in the temporary directory.`
-        );
-      }
-      throw error;
-    }
-
-    // Read the generated .d.ts file
-    const dtsPath = path.join(tmpDir, path.basename(fileName, '.ts') + '.d.ts');
-
-    if (!fs.existsSync(dtsPath)) {
-      throw new Error(`Declaration file was not generated at ${dtsPath}`);
-    }
-
-    const dtsContent = fs.readFileSync(dtsPath, 'utf-8');
-
-    return dtsContent;
-  } finally {
-    // Cleanup: remove temporary directory
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  // Verify that source file is inside project root
+  if (!absoluteSourcePath.startsWith(absoluteProjectRoot)) {
+    throw new Error('Source file must be inside project root directory');
   }
+
+  // Create a program
+  const program = ts.createProgram([absoluteSourcePath], {
+    skipLibCheck: true,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    target: ts.ScriptTarget.ES2018,
+    module: ts.ModuleKind.NodeNext,
+    baseUrl: absoluteProjectRoot,
+    rootDir: absoluteProjectRoot,
+  });
+
+  const checker = program.getTypeChecker();
+  const sourceFile = program.getSourceFile(absoluteSourcePath);
+
+  if (!sourceFile) {
+    throw new Error('Could not load source file');
+  }
+
+  // Find rpcMethods variable declaration and get its type
+  let rpcMethodsType: ts.Type | undefined;
+
+  ts.forEachChild(sourceFile, (node) => {
+    if (
+      ts.isVariableStatement(node) &&
+      node.declarationList.declarations.some((decl) => {
+        if (ts.isIdentifier(decl.name) && decl.name.text === 'rpcMethods' && decl.initializer) {
+          rpcMethodsType = checker.getTypeAtLocation(decl.initializer);
+          return true;
+        }
+        return false;
+      })
+    ) {
+      return;
+    }
+  });
+
+  if (!rpcMethodsType) {
+    throw new Error('rpcMethods not found in the source file');
+  }
+
+  // Generate interface text
+  let result = 'export declare const rpcMethods: {\n';
+
+  const properties = checker.getPropertiesOfType(rpcMethodsType);
+  properties.forEach((prop) => {
+    const propType = checker.getTypeOfSymbolAtLocation(prop, sourceFile);
+    const signatures = propType.getCallSignatures();
+
+    if (signatures.length > 0) {
+      const signature = signatures[0];
+      const parameters = signature.getParameters();
+      const returnType = signature.getReturnType();
+
+      const params = parameters
+        .map((param) => {
+          const paramType = checker.getTypeOfSymbolAtLocation(param, sourceFile);
+          return `${param.getName()}: ${checker.typeToString(paramType)}`;
+        })
+        .join(', ');
+
+      // Для Promise<T> нам нужно получить тип T
+      const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
+      if (promiseTypeArgs.length > 0) {
+        const innerType = promiseTypeArgs[0];
+        // Используем флаг TypeFormatFlags.InTypeAlias чтобы получить полное определение типа
+        const innerTypeStr = checker.typeToString(
+          innerType,
+          undefined,
+          ts.TypeFormatFlags.InTypeAlias | ts.TypeFormatFlags.NoTruncation
+        );
+        result += `    ${prop.getName()}: (${params}) => Promise<${innerTypeStr}>;\n`;
+      }
+    }
+  });
+
+  result += '};\n';
+  result += 'export type RpcMethods = typeof rpcMethods;\n';
+
+  return result;
 };

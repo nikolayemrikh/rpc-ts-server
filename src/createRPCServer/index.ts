@@ -20,11 +20,11 @@ export const createRPCServer = (rpcMethods: Record<string, (...args: unknown[]) 
 
     try {
       const result = await rpcMethods[method](...params);
-      return c.json({ result }); 
+      return c.json({ result });
     } catch (error) {
-      return c.json({ error: 'Invalid arguments' }, 400);
+      return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 400);
     }
   });
 
   return app;
-}
+};

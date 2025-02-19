@@ -2,10 +2,16 @@ import { Hono } from 'hono';
 import { generateSchema } from '../generateSchema/index.js';
 import { IMethods, TMethod } from './types.js';
 
-export const createRPCServer = (projectRoot: string, sourceFilePath: string, app: Hono, rpcMethods: IMethods): void => {
+export const createRPCServer = (
+  tsConfigPath: string,
+  projectRoot: string,
+  sourceFilePath: string,
+  app: Hono,
+  rpcMethods: IMethods
+): void => {
   // Эндпоинт для получения схемы
   app.get('/types', async (c) => {
-    const schema = generateSchema(projectRoot, sourceFilePath);
+    const schema = generateSchema(tsConfigPath, projectRoot, sourceFilePath);
     return c.text(schema);
   });
 

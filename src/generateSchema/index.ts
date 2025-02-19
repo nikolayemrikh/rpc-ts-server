@@ -37,11 +37,29 @@ export const generateSchema = (sourceFilePath: string): string => {
 
     // Find path to local typescript installation
     const tscPath = require.resolve('typescript/bin/tsc');
-    // Run local tsc to generate .d.ts
-    execSync(`node ${tscPath}`, { cwd: tmpDir });
+
+    try {
+      // Run local tsc to generate .d.ts with verbose output
+      execSync(`node ${tscPath} --listFiles --verbose`, {
+        cwd: tmpDir,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(
+          `TypeScript compilation failed: ${error.message}\nPlease check if all imports are available in the temporary directory.`
+        );
+      }
+      throw error;
+    }
 
     // Read the generated .d.ts file
     const dtsPath = path.join(tmpDir, path.basename(fileName, '.ts') + '.d.ts');
+
+    if (!fs.existsSync(dtsPath)) {
+      throw new Error(`Declaration file was not generated at ${dtsPath}`);
+    }
+
     const dtsContent = fs.readFileSync(dtsPath, 'utf-8');
 
     return dtsContent;

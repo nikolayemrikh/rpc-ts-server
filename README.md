@@ -5,13 +5,13 @@ A TypeScript RPC server library.
 ## Installation
 
 ```bash
-npm install rpc-ts-server
+npm install @nikolayemrikh/rpc-ts-server
 ```
 
 ## Usage
 
 ```typescript
-import { createRPCServer } from 'rpc-ts-server';
+import { createRPCServer } from '@nikolayemrikh/rpc-ts-server';
 
 const server = createRPCServer();
 

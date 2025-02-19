@@ -8,7 +8,7 @@ export const createRPCServer = (
   const app = new Hono();
 
   // Эндпоинт для получения схемы
-  app.get('/schema', async (c) => {
+  app.get('/types', async (c) => {
     const schema = generateSchema(sourceFilePath);
     return c.text(schema);
   });

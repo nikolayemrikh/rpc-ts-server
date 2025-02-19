@@ -9,7 +9,13 @@ describe('generateSchema', () => {
     const schema = generateSchema(projectRoot, sourceFilePath);
 
     // Expected type definition
-    const expected = `export declare const rpcMethods: {
+    const expected = `export interface User {
+    id: number;
+    name: string;
+    age: number
+};
+
+export declare const rpcMethods: {
     sayHello: (name: string) => Promise<string>;
     add: (a: number, b: number) => Promise<number>;
     getUser: (id: number) => Promise<User>;

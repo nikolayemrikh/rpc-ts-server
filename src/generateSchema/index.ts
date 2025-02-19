@@ -1,6 +1,82 @@
 import * as path from 'path';
 import * as ts from 'typescript';
 
+interface CollectedTypes {
+  [typeName: string]: ts.Type;
+}
+
+const collectTypes = (type: ts.Type, checker: ts.TypeChecker, collected: CollectedTypes = {}): CollectedTypes => {
+  // Если это именованный тип (интерфейс или тип)
+  if (type.symbol && type.symbol.name !== '__type') {
+    const typeName = type.symbol.getName();
+    if (!collected[typeName]) {
+      collected[typeName] = type;
+    }
+  }
+
+  // Рекурсивно собираем типы из union
+  if (type.isUnion()) {
+    type.types.forEach((t) => collectTypes(t, checker, collected));
+  }
+
+  // Рекурсивно собираем типы из intersection
+  if (type.isIntersection()) {
+    type.types.forEach((t) => collectTypes(t, checker, collected));
+  }
+
+  // Рекурсивно собираем типы из свойств объекта
+  if (type.isClassOrInterface() || type.flags & ts.TypeFlags.Object) {
+    type.getProperties().forEach((prop) => {
+      const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
+      collectTypes(propType, checker, collected);
+    });
+  }
+
+  return collected;
+};
+
+const serializeType = (
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  indent = 0,
+  skipTypeCollection = false
+): string => {
+  // Если это именованный тип и мы не пропускаем сбор типов
+  if (!skipTypeCollection && type.symbol && type.symbol.name !== '__type') {
+    return type.symbol.getName();
+  }
+
+  if (type.isUnion()) {
+    return type.types.map((t) => serializeType(t, checker, sourceFile, indent, skipTypeCollection)).join(' | ');
+  }
+
+  if (type.isIntersection()) {
+    return type.types.map((t) => serializeType(t, checker, sourceFile, indent, skipTypeCollection)).join(' & ');
+  }
+
+  // Если это объектный тип
+  if (type.isClassOrInterface() || type.flags & ts.TypeFlags.Object) {
+    const properties = type.getProperties();
+    if (properties.length === 0) {
+      return checker.typeToString(type);
+    }
+
+    const indentStr = ' '.repeat(indent + 4);
+    const propertiesStr = properties
+      .map((prop) => {
+        const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
+        const serialized = serializeType(propType, checker, sourceFile, indent + 4, skipTypeCollection);
+        return `${indentStr}${prop.getName()}: ${serialized}`;
+      })
+      .join(';\n');
+
+    return `{\n${propertiesStr}\n${' '.repeat(indent)}}`;
+  }
+
+  return checker.typeToString(type);
+};
+
 export const generateSchema = (projectRoot: string, sourceFilePath: string): string => {
   if (!sourceFilePath.endsWith('.ts')) {
     throw new Error('Source file must be a .ts file');
@@ -34,6 +110,7 @@ export const generateSchema = (projectRoot: string, sourceFilePath: string): str
 
   // Find rpcMethods variable declaration and get its type
   let rpcMethodsType: ts.Type | undefined;
+  const collectedTypes: CollectedTypes = {};
 
   ts.forEachChild(sourceFile, (node) => {
     if (
@@ -55,9 +132,32 @@ export const generateSchema = (projectRoot: string, sourceFilePath: string): str
   }
 
   // Generate interface text
-  let result = 'export declare const rpcMethods: {\n';
+  let result = '';
 
+  // Сначала собираем все используемые типы
   const properties = checker.getPropertiesOfType(rpcMethodsType);
+  properties.forEach((prop) => {
+    const propType = checker.getTypeOfSymbolAtLocation(prop, sourceFile);
+    const signatures = propType.getCallSignatures();
+
+    if (signatures.length > 0) {
+      const signature = signatures[0];
+      const returnType = signature.getReturnType();
+      const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
+      if (promiseTypeArgs.length > 0) {
+        collectTypes(promiseTypeArgs[0], checker, collectedTypes);
+      }
+    }
+  });
+
+  // Генерируем определения типов
+  Object.entries(collectedTypes).forEach(([name, type]) => {
+    result += `export interface ${name} ${serializeType(type, checker, sourceFile, 0, true)};\n\n`;
+  });
+
+  // Генерируем определение rpcMethods
+  result += 'export declare const rpcMethods: {\n';
+
   properties.forEach((prop) => {
     const propType = checker.getTypeOfSymbolAtLocation(prop, sourceFile);
     const signatures = propType.getCallSignatures();
@@ -74,16 +174,10 @@ export const generateSchema = (projectRoot: string, sourceFilePath: string): str
         })
         .join(', ');
 
-      // Для Promise<T> нам нужно получить тип T
       const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
       if (promiseTypeArgs.length > 0) {
         const innerType = promiseTypeArgs[0];
-        // Используем флаг TypeFormatFlags.InTypeAlias чтобы получить полное определение типа
-        const innerTypeStr = checker.typeToString(
-          innerType,
-          undefined,
-          ts.TypeFormatFlags.InTypeAlias | ts.TypeFormatFlags.NoTruncation
-        );
+        const innerTypeStr = serializeType(innerType, checker, sourceFile);
         result += `    ${prop.getName()}: (${params}) => Promise<${innerTypeStr}>;\n`;
       }
     }

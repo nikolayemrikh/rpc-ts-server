@@ -12,8 +12,12 @@ npm install @nikolayemrikh/rpc-ts-server
 
 ```typescript
 import { createRPCServer } from '@nikolayemrikh/rpc-ts-server';
+import { serve } from '@hono/node-server'
 
 const server = createRPCServer();
 
-server.start();
+serve({
+  fetch: server.fetch,
+  port: 3000,
+});
 ```

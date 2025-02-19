@@ -4,7 +4,9 @@ import { sayHello } from './sayHello';
 export const rpcMethods = {
   sayHello,
   add: (a: number, b: number) => Promise.resolve(a + b),
-  getUser,
+  authenticated: {
+    getUser,
+  },
 };
 
 export type RpcMethods = typeof rpcMethods;

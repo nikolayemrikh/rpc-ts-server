@@ -6,29 +6,81 @@ interface CollectedTypes {
 }
 
 const collectTypes = (type: ts.Type, checker: ts.TypeChecker, collected: CollectedTypes = {}): CollectedTypes => {
-  // Если это именованный тип (интерфейс или тип)
+  // Обработка именованных типов
   if (type.symbol && type.symbol.name !== '__type') {
     const typeName = type.symbol.getName();
     if (!collected[typeName]) {
       collected[typeName] = type;
+
+      // Если это алиас типа, собираем типы из целевого типа
+      if (type.isTypeParameter()) {
+        const constraint = checker.getBaseConstraintOfType(type);
+        if (constraint) {
+          collectTypes(constraint, checker, collected);
+        }
+      }
+
+      // Если это класс или интерфейс, собираем базовые типы
+      if (type.isClassOrInterface()) {
+        const baseTypes = type.getBaseTypes();
+        if (baseTypes) {
+          baseTypes.forEach((baseType) => collectTypes(baseType, checker, collected));
+        }
+      }
     }
   }
 
-  // Рекурсивно собираем типы из union
+  // Обработка массивов
+  if (checker.isArrayType(type)) {
+    const elementType = checker.getTypeArguments(type as ts.TypeReference)[0];
+    collectTypes(elementType, checker, collected);
+  }
+
+  // Обработка кортежей
+  if (checker.isTupleType(type)) {
+    const tupleTypes = checker.getTypeArguments(type as ts.TypeReference);
+    tupleTypes.forEach((t) => collectTypes(t, checker, collected));
+  }
+
+  // Обработка union типов
   if (type.isUnion()) {
     type.types.forEach((t) => collectTypes(t, checker, collected));
   }
 
-  // Рекурсивно собираем типы из intersection
+  // Обработка intersection типов
   if (type.isIntersection()) {
     type.types.forEach((t) => collectTypes(t, checker, collected));
   }
 
-  // Рекурсивно собираем типы из свойств объекта
+  // Обработка объектных типов и их свойств
   if (type.isClassOrInterface() || type.flags & ts.TypeFlags.Object) {
+    // Обработка generic параметров
+    if (type.flags & ts.TypeFlags.Object) {
+      const typeRef = type as ts.TypeReference;
+      if (typeRef.typeArguments) {
+        typeRef.typeArguments.forEach((t) => collectTypes(t, checker, collected));
+      }
+    }
+
+    // Обработка свойств
     type.getProperties().forEach((prop) => {
       const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
       collectTypes(propType, checker, collected);
+
+      // Обработка методов и их параметров
+      if (prop.flags & ts.SymbolFlags.Method) {
+        const signatures = propType.getCallSignatures();
+        signatures.forEach((signature) => {
+          // Обработка параметров
+          signature.getParameters().forEach((param) => {
+            const paramType = checker.getTypeOfSymbolAtLocation(param, param.valueDeclaration!);
+            collectTypes(paramType, checker, collected);
+          });
+          // Обработка возвращаемого типа
+          const returnType = signature.getReturnType();
+          collectTypes(returnType, checker, collected);
+        });
+      }
     });
   }
 
@@ -75,6 +127,60 @@ const serializeType = (
   }
 
   return checker.typeToString(type);
+};
+
+const processMethodType = (
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  indent: number,
+  collected: CollectedTypes,
+  path: string[] = []
+): string => {
+  const properties = checker.getPropertiesOfType(type);
+  const indentStr = ' '.repeat(indent + 4);
+  const results: string[] = [];
+
+  for (const prop of properties) {
+    const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
+    const propName = prop.getName();
+    const currentPath = [...path, propName];
+
+    // Проверяем, является ли свойство объектом с методами
+    if (
+      propType.getCallSignatures().length === 0 &&
+      (propType.isClassOrInterface() || propType.flags & ts.TypeFlags.Object)
+    ) {
+      // Это вложенный объект, рекурсивно обрабатываем его
+      const nestedMethods = processMethodType(propType, checker, sourceFile, indent + 4, collected, currentPath);
+      results.push(`${indentStr}${propName}: {${nestedMethods}\n${indentStr}};`);
+    } else {
+      // Это метод, обрабатываем его сигнатуру
+      const signatures = propType.getCallSignatures();
+      if (signatures.length > 0) {
+        const signature = signatures[0];
+        const parameters = signature.getParameters();
+        const returnType = signature.getReturnType();
+
+        const params = parameters
+          .map((param) => {
+            const paramType = checker.getTypeOfSymbolAtLocation(param, prop.valueDeclaration!);
+            return `${param.getName()}: ${checker.typeToString(paramType)}`;
+          })
+          .join(', ');
+
+        const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
+        if (promiseTypeArgs.length > 0) {
+          const innerType = promiseTypeArgs[0];
+          const innerTypeStr = serializeType(innerType, checker, sourceFile);
+          results.push(`${indentStr}${propName}: (${params}) => Promise<${innerTypeStr}>;`);
+          collectTypes(innerType, checker, collected);
+        }
+      }
+    }
+  }
+
+  return `\n${results.join('\n')}`;
 };
 
 export const generateSchema = (tsConfigPath: string, projectRoot: string, sourceFilePath: string): string => {
@@ -143,15 +249,36 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
   // Сначала собираем все используемые типы
   const properties = checker.getPropertiesOfType(rpcMethodsType);
   properties.forEach((prop) => {
-    const propType = checker.getTypeOfSymbolAtLocation(prop, sourceFile);
-    const signatures = propType.getCallSignatures();
+    const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
 
-    if (signatures.length > 0) {
-      const signature = signatures[0];
-      const returnType = signature.getReturnType();
-      const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
-      if (promiseTypeArgs.length > 0) {
-        collectTypes(promiseTypeArgs[0], checker, collectedTypes);
+    // Если это вложенный объект, собираем типы из его методов
+    if (
+      propType.getCallSignatures().length === 0 &&
+      (propType.isClassOrInterface() || propType.flags & ts.TypeFlags.Object)
+    ) {
+      const nestedProperties = checker.getPropertiesOfType(propType);
+      nestedProperties.forEach((nestedProp) => {
+        const nestedPropType = checker.getTypeOfSymbolAtLocation(nestedProp, nestedProp.valueDeclaration!);
+        const signatures = nestedPropType.getCallSignatures();
+        if (signatures.length > 0) {
+          const signature = signatures[0];
+          const returnType = signature.getReturnType();
+          const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
+          if (promiseTypeArgs.length > 0) {
+            collectTypes(promiseTypeArgs[0], checker, collectedTypes);
+          }
+        }
+      });
+    } else {
+      // Обычный метод верхнего уровня
+      const signatures = propType.getCallSignatures();
+      if (signatures.length > 0) {
+        const signature = signatures[0];
+        const returnType = signature.getReturnType();
+        const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
+        if (promiseTypeArgs.length > 0) {
+          collectTypes(promiseTypeArgs[0], checker, collectedTypes);
+        }
       }
     }
   });
@@ -162,34 +289,9 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
   });
 
   // Генерируем определение rpcMethods
-  result += 'export declare const rpcMethods: {\n';
-
-  properties.forEach((prop) => {
-    const propType = checker.getTypeOfSymbolAtLocation(prop, sourceFile);
-    const signatures = propType.getCallSignatures();
-
-    if (signatures.length > 0) {
-      const signature = signatures[0];
-      const parameters = signature.getParameters();
-      const returnType = signature.getReturnType();
-
-      const params = parameters
-        .map((param) => {
-          const paramType = checker.getTypeOfSymbolAtLocation(param, sourceFile);
-          return `${param.getName()}: ${checker.typeToString(paramType)}`;
-        })
-        .join(', ');
-
-      const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
-      if (promiseTypeArgs.length > 0) {
-        const innerType = promiseTypeArgs[0];
-        const innerTypeStr = serializeType(innerType, checker, sourceFile);
-        result += `    ${prop.getName()}: (${params}) => Promise<${innerTypeStr}>;\n`;
-      }
-    }
-  });
-
-  result += '};\n';
+  result += 'export declare const rpcMethods: {';
+  result += processMethodType(rpcMethodsType, checker, sourceFile, 0, collectedTypes);
+  result += '\n};\n';
   result += 'export type RpcMethods = typeof rpcMethods;\n';
 
   return result;

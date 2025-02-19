@@ -1,5 +1,5 @@
 {
-  "name": "rpc-ts-server",
+  "name": "@nikolayemrikh/rpc-ts-server",
   "version": "1.0.0",
   "description": "",
   "type": "module",

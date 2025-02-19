@@ -1,10 +1,8 @@
 import { Project, ts } from 'ts-morph';
 
-import path from 'path';
-
-export const generateSchema = (): string => {
+export const generateSchema = (sourceFilePath: string): string => {
   const project = new Project();
-  const sourceFile = project.addSourceFileAtPath(path.resolve(__dirname, 'rpc.ts'));
+  const sourceFile = project.addSourceFileAtPath(sourceFilePath);
 
   const rpcMethodsSymbol = sourceFile.getVariableDeclaration('rpcMethods');
   if (!rpcMethodsSymbol) {

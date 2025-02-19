@@ -1,12 +1,15 @@
 import { Hono } from 'hono';
 import { generateSchema } from '../generateSchema/index.js';
 
-export const createRPCServer = (rpcMethods: Record<string, (...args: unknown[]) => Promise<unknown>>) => {
+export const createRPCServer = (
+  sourceFilePath: string,
+  rpcMethods: Record<string, (...args: unknown[]) => Promise<unknown>>
+) => {
   const app = new Hono();
 
   // Эндпоинт для получения схемы
   app.get('/schema', async (c) => {
-    const schema = generateSchema();
+    const schema = generateSchema(sourceFilePath);
     return c.text(schema);
   });
 

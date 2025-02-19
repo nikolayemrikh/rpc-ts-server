@@ -35,8 +35,10 @@ export const generateSchema = (sourceFilePath: string): string => {
 
     fs.writeFileSync(path.join(tmpDir, 'tsconfig.json'), JSON.stringify(tsConfig, null, 2));
 
-    // Run tsc to generate .d.ts
-    execSync('tsc', { cwd: tmpDir });
+    // Find path to local typescript installation
+    const tscPath = require.resolve('typescript/bin/tsc');
+    // Run local tsc to generate .d.ts
+    execSync(`node ${tscPath}`, { cwd: tmpDir });
 
     // Read the generated .d.ts file
     const dtsPath = path.join(tmpDir, path.basename(fileName, '.ts') + '.d.ts');

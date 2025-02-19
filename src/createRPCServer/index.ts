@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { generateSchema } from '../generateSchema/index.js';
 
 export const createRPCServer = (
+  projectRoot: string,
   sourceFilePath: string,
   rpcMethods: Record<string, (...args: unknown[]) => Promise<unknown>>
 ) => {
@@ -9,7 +10,7 @@ export const createRPCServer = (
 
   // Эндпоинт для получения схемы
   app.get('/types', async (c) => {
-    const schema = generateSchema(sourceFilePath);
+    const schema = generateSchema(projectRoot, sourceFilePath);
     return c.text(schema);
   });
 

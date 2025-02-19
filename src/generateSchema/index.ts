@@ -1,204 +1,14 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import archiver from 'archiver';
 import * as ts from 'typescript';
 
-interface CollectedTypes {
-  [typeName: string]: ts.Type;
-}
-
-const collectTypes = (type: ts.Type, checker: ts.TypeChecker, collected: CollectedTypes = {}): CollectedTypes => {
-  // Обработка именованных типов
-  if (type.symbol && type.symbol.name !== '__type') {
-    const typeName = type.symbol.getName();
-    if (!collected[typeName]) {
-      collected[typeName] = type;
-
-      // Если это алиас типа, собираем типы из целевого типа
-      if (type.isTypeParameter()) {
-        const constraint = checker.getBaseConstraintOfType(type);
-        if (constraint) {
-          collectTypes(constraint, checker, collected);
-        }
-      }
-
-      // Если это класс или интерфейс, собираем базовые типы
-      if (type.isClassOrInterface()) {
-        const baseTypes = type.getBaseTypes();
-        if (baseTypes) {
-          baseTypes.forEach((baseType) => collectTypes(baseType, checker, collected));
-        }
-      }
-    }
-  }
-
-  // Обработка массивов
-  if (checker.isArrayType(type)) {
-    const elementType = checker.getTypeArguments(type as ts.TypeReference)[0];
-    collectTypes(elementType, checker, collected);
-  }
-
-  // Обработка кортежей
-  if (checker.isTupleType(type)) {
-    const tupleTypes = checker.getTypeArguments(type as ts.TypeReference);
-    tupleTypes.forEach((t) => collectTypes(t, checker, collected));
-  }
-
-  // Обработка union типов
-  if (type.isUnion()) {
-    type.types.forEach((t) => collectTypes(t, checker, collected));
-  }
-
-  // Обработка intersection типов
-  if (type.isIntersection()) {
-    type.types.forEach((t) => collectTypes(t, checker, collected));
-  }
-
-  // Обработка объектных типов и их свойств
-  if (type.isClassOrInterface() || type.flags & ts.TypeFlags.Object) {
-    // Обработка generic параметров
-    if (type.flags & ts.TypeFlags.Object) {
-      const typeRef = type as ts.TypeReference;
-      if (typeRef.typeArguments) {
-        typeRef.typeArguments.forEach((t) => collectTypes(t, checker, collected));
-      }
-    }
-
-    // Обработка свойств
-    type.getProperties().forEach((prop) => {
-      const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
-      collectTypes(propType, checker, collected);
-
-      // Обработка методов и их параметров
-      if (prop.flags & ts.SymbolFlags.Method) {
-        const signatures = propType.getCallSignatures();
-        signatures.forEach((signature) => {
-          // Обработка параметров
-          signature.getParameters().forEach((param) => {
-            const paramType = checker.getTypeOfSymbolAtLocation(param, param.valueDeclaration!);
-            collectTypes(paramType, checker, collected);
-          });
-          // Обработка возвращаемого типа
-          const returnType = signature.getReturnType();
-          collectTypes(returnType, checker, collected);
-        });
-      }
-    });
-  }
-
-  return collected;
-};
-
-const serializeType = (
-  type: ts.Type,
-  checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
-  indent = 0,
-  skipTypeCollection = false
-): string => {
-  // Если это именованный тип и мы не пропускаем сбор типов
-  if (!skipTypeCollection && type.symbol && type.symbol.name !== '__type') {
-    return type.symbol.getName();
-  }
-
-  if (type.isUnion()) {
-    return type.types.map((t) => serializeType(t, checker, sourceFile, indent, skipTypeCollection)).join(' | ');
-  }
-
-  if (type.isIntersection()) {
-    return type.types.map((t) => serializeType(t, checker, sourceFile, indent, skipTypeCollection)).join(' & ');
-  }
-
-  // Если это объектный тип
-  if (type.isClassOrInterface() || type.flags & ts.TypeFlags.Object) {
-    const properties = type.getProperties();
-    if (properties.length === 0) {
-      return checker.typeToString(type);
-    }
-
-    const indentStr = ' '.repeat(indent + indentSize);
-    const propertiesStr = properties
-      .map((prop) => {
-        const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
-        const serialized = serializeType(propType, checker, sourceFile, indent + 4, skipTypeCollection);
-        return `${indentStr}${prop.getName()}: ${serialized};`;
-      })
-      .join('\n');
-
-    return `{\n${propertiesStr}\n${' '.repeat(indent)}}`;
-  }
-
-  return checker.typeToString(type);
-};
-
-const indentSize = 2;
-
-const processMethodType = (
-  type: ts.Type,
-  checker: ts.TypeChecker,
-  sourceFile: ts.SourceFile,
-  indent: number,
-  collected: CollectedTypes,
-  path: string[] = []
-): string => {
-  const properties = checker.getPropertiesOfType(type);
-  const indentStr = ' '.repeat(indent + indentSize);
-  const results: string[] = [];
-
-  for (const prop of properties) {
-    const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
-    const propName = prop.getName();
-    const currentPath = [...path, propName];
-
-    // Получаем тип без satisfies
-    const resolvedType = checker.getBaseTypeOfLiteralType(propType);
-
-    // Проверяем, является ли свойство объектом с методами
-    if (
-      resolvedType.getCallSignatures().length === 0 &&
-      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
-    ) {
-      // Это вложенный объект, рекурсивно обрабатываем его
-      const nestedMethods = processMethodType(
-        resolvedType,
-        checker,
-        sourceFile,
-        indent + indentSize,
-        collected,
-        currentPath
-      );
-      if (nestedMethods.trim()) {
-        // Добавляем объект только если в нем есть методы
-        results.push(`${indentStr}${propName}: {${nestedMethods}\n${indentStr}};`);
-      }
-    } else {
-      // Это метод, обрабатываем его сигнатуру
-      const signatures = resolvedType.getCallSignatures();
-      if (signatures.length > 0) {
-        const signature = signatures[0];
-        const parameters = signature.getParameters();
-        const returnType = signature.getReturnType();
-
-        const params = parameters
-          .map((param) => {
-            const paramType = checker.getTypeOfSymbolAtLocation(param, param.valueDeclaration!);
-            return `${param.getName()}: ${checker.typeToString(paramType)}`;
-          })
-          .join(', ');
-
-        const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
-        if (promiseTypeArgs.length > 0) {
-          const innerType = promiseTypeArgs[0];
-          const innerTypeStr = serializeType(innerType, checker, sourceFile);
-          results.push(`${indentStr}${propName}: (${params}) => Promise<${innerTypeStr}>;`);
-          collectTypes(innerType, checker, collected);
-        }
-      }
-    }
-  }
-
-  return `\n${results.join('\n')}`;
-};
-
-export const generateSchema = (tsConfigPath: string, projectRoot: string, sourceFilePath: string): string => {
+export const generateSchema = async (
+  tsConfigPath: string,
+  projectRoot: string,
+  sourceFilePath: string
+): Promise<Buffer> => {
   if (!sourceFilePath.endsWith('.ts')) {
     throw new Error('Source file must be a .ts file');
   }
@@ -213,100 +23,91 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
     throw new Error('Source file must be inside project root directory');
   }
 
-  // Create a program using tsconfig.json
-  const { config, error } = ts.readConfigFile(absoluteTsConfigPath, ts.sys.readFile);
+  // Create a temporary directory for output
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rpc-schema-'));
+  const typesDir = path.join(tempDir, 'types');
+  fs.mkdirSync(typesDir);
 
-  if (error) {
-    throw new Error(`Failed to read tsconfig.json: ${error.messageText}`);
-  }
+  try {
+    // Read the original tsconfig
+    const { config: originalConfig, error } = ts.readConfigFile(absoluteTsConfigPath, ts.sys.readFile);
 
-  const { options, errors } = ts.parseJsonConfigFileContent(config, ts.sys, path.dirname(absoluteTsConfigPath));
-
-  if (errors.length > 0) {
-    throw new Error(`Failed to parse tsconfig.json: ${errors[0].messageText}`);
-  }
-
-  const program = ts.createProgram([absoluteSourcePath], options);
-
-  const checker = program.getTypeChecker();
-  const sourceFile = program.getSourceFile(absoluteSourcePath);
-
-  if (!sourceFile) {
-    throw new Error('Could not load source file');
-  }
-
-  // Find rpcMethods variable declaration and get its type
-  let rpcMethodsType: ts.Type | undefined;
-  const collectedTypes: CollectedTypes = {};
-
-  ts.forEachChild(sourceFile, (node) => {
-    if (
-      ts.isVariableStatement(node) &&
-      node.declarationList.declarations.some((decl) => {
-        if (ts.isIdentifier(decl.name) && decl.name.text === 'rpcMethods' && decl.initializer) {
-          rpcMethodsType = checker.getTypeAtLocation(decl.initializer);
-          return true;
-        }
-        return false;
-      })
-    ) {
-      return;
+    if (error) {
+      throw new Error(`Failed to read tsconfig.json: ${error.messageText}`);
     }
-  });
 
-  if (!rpcMethodsType) {
-    throw new Error('rpcMethods not found in the source file');
-  }
-
-  // Generate interface text
-  let result = '';
-
-  // Сначала собираем все используемые типы
-  const properties = checker.getPropertiesOfType(rpcMethodsType);
-  properties.forEach((prop) => {
-    const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
-    const resolvedType = checker.getBaseTypeOfLiteralType(propType);
-
-    // Если это вложенный объект, собираем типы из его методов
-    const processSignatures = (type: ts.Type): void => {
-      const signatures = type.getCallSignatures();
-      if (signatures.length > 0) {
-        const signature = signatures[0];
-        const returnType = signature.getReturnType();
-        const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
-        if (promiseTypeArgs.length > 0) {
-          collectTypes(promiseTypeArgs[0], checker, collectedTypes);
-        }
-      }
+    // Create a modified config for declaration file generation
+    const buildConfig = {
+      ...originalConfig,
+      compilerOptions: {
+        ...originalConfig.compilerOptions,
+        declaration: true,
+        emitDeclarationOnly: true,
+        noEmit: false,
+        outDir: typesDir,
+        removeComments: true,
+      },
     };
 
-    if (
-      resolvedType.getCallSignatures().length === 0 &&
-      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
-    ) {
-      // Вложенный объект
-      const nestedProperties = checker.getPropertiesOfType(resolvedType);
-      nestedProperties.forEach((nestedProp) => {
-        const nestedPropType = checker.getTypeOfSymbolAtLocation(nestedProp, nestedProp.valueDeclaration!);
-        const nestedResolvedType = checker.getBaseTypeOfLiteralType(nestedPropType);
-        processSignatures(nestedResolvedType);
-      });
-    } else {
-      // Обычный метод верхнего уровня
-      processSignatures(resolvedType);
+    // Create a program
+    const { options, errors: configErrors } = ts.parseJsonConfigFileContent(
+      buildConfig,
+      ts.sys,
+      path.dirname(absoluteTsConfigPath)
+    );
+
+    if (configErrors.length > 0) {
+      throw new Error(`Failed to parse tsconfig: ${configErrors[0].messageText}`);
     }
-  });
 
-  // Генерируем определения типов
-  Object.entries(collectedTypes).forEach(([name, type]) => {
-    result += `export interface ${name} ${serializeType(type, checker, sourceFile, 0, true)};\n\n`;
-  });
+    const program = ts.createProgram([absoluteSourcePath], options);
+    const emitResult = program.emit();
 
-  // Генерируем определение rpcMethods
-  result += 'export declare const rpcMethods: {';
-  result += processMethodType(rpcMethodsType, checker, sourceFile, 0, collectedTypes);
-  result += '\n};\n';
-  result += 'export type RpcMethods = typeof rpcMethods;\n';
+    const allDiagnostics = ts.getPreEmitDiagnostics(program).concat(emitResult.diagnostics);
 
-  return result;
+    if (allDiagnostics.length > 0) {
+      const formatHost: ts.FormatDiagnosticsHost = {
+        getCanonicalFileName: (path) => path,
+        getCurrentDirectory: ts.sys.getCurrentDirectory,
+        getNewLine: () => ts.sys.newLine,
+      };
+
+      throw new Error(ts.formatDiagnostics(allDiagnostics, formatHost));
+    }
+
+    // Create rpc.d.ts that re-exports RpcMethods from the source file
+    const sourceFileName = path.basename(sourceFilePath, '.ts');
+    const rpcContent = `import type { RpcMethods } from './${sourceFileName}';
+export type { RpcMethods };`;
+    fs.writeFileSync(path.join(typesDir, 'rpc-ts-server.d.ts'), rpcContent);
+
+    // Create archive in memory
+    const archive = archiver('zip', {
+      zlib: { level: 9 },
+    });
+
+    const chunks: Buffer[] = [];
+    archive.on('data', (chunk) => chunks.push(chunk));
+
+    return new Promise((resolve, reject) => {
+      archive.on('end', () => {
+        // Clean up temporary directory
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        resolve(Buffer.concat(chunks));
+      });
+
+      archive.on('error', (err) => {
+        // Clean up temporary directory
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        reject(err);
+      });
+
+      archive.directory(typesDir, false);
+      archive.finalize();
+    });
+  } catch (error) {
+    // Clean up on error
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    throw error;
+  }
 };

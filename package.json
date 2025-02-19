@@ -1,6 +1,6 @@
 {
   "name": "@nikolayemrikh/rpc-ts-server",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,8 +28,10 @@
   "homepage": "https://github.com/nikolayemrikh/rpc-ts-server#readme",
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
+    "@types/adm-zip": "^0.5.7",
     "@types/jest": "29.5.14",
     "@types/node": "22.13.4",
+    "adm-zip": "^0.5.16",
     "jest": "29.7.0",
     "ts-jest": "29.2.5",
     "typescript": "5.7.3"
@@ -43,6 +45,8 @@
     "access": "public"
   },
   "dependencies": {
+    "@types/archiver": "6.0.3",
+    "archiver": "7.0.1",
     "hono": "4.7.2",
     "ts-morph": "25.0.1"
   }

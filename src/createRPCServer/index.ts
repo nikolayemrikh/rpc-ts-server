@@ -11,8 +11,10 @@ export const createRPCServer = (
 ): void => {
   // Эндпоинт для получения схемы
   app.get('/types', async (c) => {
-    const schema = generateSchema(tsConfigPath, projectRoot, sourceFilePath);
-    return c.text(schema);
+    const archive = await generateSchema(tsConfigPath, projectRoot, sourceFilePath);
+    c.header('Content-Type', 'application/zip');
+    c.header('Content-Disposition', 'attachment; filename="types.zip"');
+    return c.body(archive);
   });
 
   // Эндпоинт для вызова методов

@@ -1,83 +1,50 @@
-import { Node, Project, SourceFile, TypeAliasDeclaration, VariableDeclaration, ts } from 'ts-morph';
-
-type RpcMethodsType = {
-  declaration: VariableDeclaration | TypeAliasDeclaration;
-  isDts: boolean;
-};
-
-const findRpcMethodsType = (sourceFile: SourceFile): RpcMethodsType | null => {
-  // First try to find type alias
-  const typeAlias = sourceFile.getFirstDescendant(
-    (node): node is TypeAliasDeclaration => Node.isTypeAliasDeclaration(node) && node.getName() === 'RpcMethods'
-  );
-
-  if (typeAlias) {
-    const isDts = sourceFile.getFilePath().endsWith('.d.ts');
-    return { declaration: typeAlias, isDts };
-  }
-
-  // If no type alias found, try to find variable declaration
-  const varDeclaration = sourceFile.getFirstDescendant(
-    (node): node is VariableDeclaration => Node.isVariableDeclaration(node) && node.getName() === 'rpcMethods'
-  );
-
-  if (varDeclaration) {
-    const isDts = sourceFile.getFilePath().endsWith('.d.ts');
-    return { declaration: varDeclaration, isDts };
-  }
-
-  return null;
-};
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 export const generateSchema = (sourceFilePath: string): string => {
-  if (!sourceFilePath.endsWith('.ts') && !sourceFilePath.endsWith('.d.ts')) {
-    throw new Error('Source file must be either .ts or .d.ts');
+  if (!sourceFilePath.endsWith('.ts')) {
+    throw new Error('Source file must be a .ts file');
   }
 
-  const project = new Project();
-  const sourceFile = project.addSourceFileAtPath(sourceFilePath);
+  // Create a temporary directory
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rpc-schema-'));
+  const fileName = path.basename(sourceFilePath);
+  const tmpFilePath = path.join(tmpDir, fileName);
 
-  const rpcMethodsType = findRpcMethodsType(sourceFile);
-  if (!rpcMethodsType) {
-    throw new Error('Neither rpcMethods declaration nor RpcMethods type found');
+  try {
+    // Copy the source file to temp directory
+    fs.copyFileSync(sourceFilePath, tmpFilePath);
+
+    // Create a temporary tsconfig.json
+    const tsConfig = {
+      compilerOptions: {
+        declaration: true,
+        emitDeclarationOnly: true,
+        noEmit: false,
+        skipLibCheck: true,
+        moduleResolution: 'node',
+        target: 'ES2018',
+        module: 'CommonJS',
+        esModuleInterop: true,
+        strict: true,
+      },
+      include: [fileName],
+    };
+
+    fs.writeFileSync(path.join(tmpDir, 'tsconfig.json'), JSON.stringify(tsConfig, null, 2));
+
+    // Run tsc to generate .d.ts
+    execSync('tsc', { cwd: tmpDir });
+
+    // Read the generated .d.ts file
+    const dtsPath = path.join(tmpDir, path.basename(fileName, '.ts') + '.d.ts');
+    const dtsContent = fs.readFileSync(dtsPath, 'utf-8');
+
+    return dtsContent;
+  } finally {
+    // Cleanup: remove temporary directory
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
-
-  const { declaration, isDts } = rpcMethodsType;
-
-  // For .d.ts files, we can directly use the type
-  if (isDts) {
-    if (Node.isTypeAliasDeclaration(declaration)) {
-      return `export ${declaration.getText()}\n`;
-    }
-    // For variable declaration in .d.ts
-    return `export type RpcMethods = ${declaration.getType().getText()}\n`;
-  }
-
-  // For .ts files, we need to generate the interface
-  let interfaceText = `export interface RpcMethods {\n`;
-
-  if (Node.isVariableDeclaration(declaration)) {
-    const properties = declaration.getInitializerIfKindOrThrow(ts.SyntaxKind.ObjectLiteralExpression).getProperties();
-
-    properties.forEach((prop) => {
-      if (prop.isKind(ts.SyntaxKind.PropertyAssignment) || prop.isKind(ts.SyntaxKind.ShorthandPropertyAssignment)) {
-        const name = prop.getName();
-        const type = prop.getType();
-        const signature = type.getCallSignatures()[0];
-
-        if (signature) {
-          const params = signature
-            .getParameters()
-            .map((p) => `${p.getName()}: ${p.getValueDeclaration()?.getType().getText()}`)
-            .join(', ');
-          const returnType = signature.getReturnType().getText();
-
-          interfaceText += `  ${name}(${params}): ${returnType};\n`;
-        }
-      }
-    });
-  }
-
-  interfaceText += `}\n`;
-  return interfaceText;
 };

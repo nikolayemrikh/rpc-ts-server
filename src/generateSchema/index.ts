@@ -114,7 +114,7 @@ const serializeType = (
       return checker.typeToString(type);
     }
 
-    const indentStr = ' '.repeat(indent + 4);
+    const indentStr = ' '.repeat(indent + indentSize);
     const propertiesStr = properties
       .map((prop) => {
         const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
@@ -129,6 +129,8 @@ const serializeType = (
   return checker.typeToString(type);
 };
 
+const indentSize = 2;
+
 const processMethodType = (
   type: ts.Type,
   checker: ts.TypeChecker,
@@ -138,7 +140,7 @@ const processMethodType = (
   path: string[] = []
 ): string => {
   const properties = checker.getPropertiesOfType(type);
-  const indentStr = ' '.repeat(indent + 4);
+  const indentStr = ' '.repeat(indent + indentSize);
   const results: string[] = [];
 
   for (const prop of properties) {
@@ -155,7 +157,14 @@ const processMethodType = (
       (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
     ) {
       // Это вложенный объект, рекурсивно обрабатываем его
-      const nestedMethods = processMethodType(resolvedType, checker, sourceFile, indent + 4, collected, currentPath);
+      const nestedMethods = processMethodType(
+        resolvedType,
+        checker,
+        sourceFile,
+        indent + indentSize,
+        collected,
+        currentPath
+      );
       if (nestedMethods.trim()) {
         // Добавляем объект только если в нем есть методы
         results.push(`${indentStr}${propName}: {${nestedMethods}\n${indentStr}};`);
@@ -259,27 +268,8 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
     const resolvedType = checker.getBaseTypeOfLiteralType(propType);
 
     // Если это вложенный объект, собираем типы из его методов
-    if (
-      resolvedType.getCallSignatures().length === 0 &&
-      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
-    ) {
-      const nestedProperties = checker.getPropertiesOfType(resolvedType);
-      nestedProperties.forEach((nestedProp) => {
-        const nestedPropType = checker.getTypeOfSymbolAtLocation(nestedProp, nestedProp.valueDeclaration!);
-        const nestedResolvedType = checker.getBaseTypeOfLiteralType(nestedPropType);
-        const signatures = nestedResolvedType.getCallSignatures();
-        if (signatures.length > 0) {
-          const signature = signatures[0];
-          const returnType = signature.getReturnType();
-          const promiseTypeArgs = checker.getTypeArguments(returnType as ts.TypeReference);
-          if (promiseTypeArgs.length > 0) {
-            collectTypes(promiseTypeArgs[0], checker, collectedTypes);
-          }
-        }
-      });
-    } else {
-      // Обычный метод верхнего уровня
-      const signatures = resolvedType.getCallSignatures();
+    const processSignatures = (type: ts.Type): void => {
+      const signatures = type.getCallSignatures();
       if (signatures.length > 0) {
         const signature = signatures[0];
         const returnType = signature.getReturnType();
@@ -288,6 +278,22 @@ export const generateSchema = (tsConfigPath: string, projectRoot: string, source
           collectTypes(promiseTypeArgs[0], checker, collectedTypes);
         }
       }
+    };
+
+    if (
+      resolvedType.getCallSignatures().length === 0 &&
+      (resolvedType.isClassOrInterface() || resolvedType.flags & ts.TypeFlags.Object)
+    ) {
+      // Вложенный объект
+      const nestedProperties = checker.getPropertiesOfType(resolvedType);
+      nestedProperties.forEach((nestedProp) => {
+        const nestedPropType = checker.getTypeOfSymbolAtLocation(nestedProp, nestedProp.valueDeclaration!);
+        const nestedResolvedType = checker.getBaseTypeOfLiteralType(nestedPropType);
+        processSignatures(nestedResolvedType);
+      });
+    } else {
+      // Обычный метод верхнего уровня
+      processSignatures(resolvedType);
     }
   });
 

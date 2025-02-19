@@ -67,9 +67,9 @@ const serializeType = (
       .map((prop) => {
         const propType = checker.getTypeOfSymbolAtLocation(prop, prop.valueDeclaration!);
         const serialized = serializeType(propType, checker, sourceFile, indent + 4, skipTypeCollection);
-        return `${indentStr}${prop.getName()}: ${serialized}`;
+        return `${indentStr}${prop.getName()}: ${serialized};`;
       })
-      .join(';\n');
+      .join('\n');
 
     return `{\n${propertiesStr}\n${' '.repeat(indent)}}`;
   }

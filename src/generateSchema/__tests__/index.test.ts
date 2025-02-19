@@ -12,7 +12,7 @@ describe('generateSchema', () => {
     const expected = `export interface User {
     id: number;
     name: string;
-    age: number
+    age: number;
 };
 
 export declare const rpcMethods: {

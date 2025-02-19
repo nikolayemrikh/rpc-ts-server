@@ -1,0 +1,42 @@
+{
+  "name": "rpc-ts-server",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prepare": "npm run clean && npm run build",
+    "test": "jest",
+    "format": "biome format --write src/",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --apply src/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nikolayemrikh/rpc-ts-server.git"
+  },
+  "author": "nikolayemrikh",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/nikolayemrikh/rpc-ts-server/issues"
+  },
+  "homepage": "https://github.com/nikolayemrikh/rpc-ts-server#readme",
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/jest": "29.5.14",
+    "@types/node": "22.13.4",
+    "jest": "29.7.0",
+    "ts-jest": "29.2.5",
+    "typescript": "5.7.3"
+  },
+  "keywords": ["typescript", "rpc", "server"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

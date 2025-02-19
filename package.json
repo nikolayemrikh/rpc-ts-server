@@ -1,25 +1,14 @@
 {
   "name": "@nikolayemrikh/rpc-ts-server",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "",
-  "type": "module",
-  "main": "./dist/cjs/index.js",
-  "module": "./dist/esm/index.js",
-  "types": "./dist/esm/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js",
-      "types": "./dist/esm/index.d.ts"
-    }
-  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "npm run build:esm && npm run build:cjs",
-    "build:esm": "tsc --module ES2022 --moduleResolution bundler --outDir ./dist/esm",
-    "build:cjs": "tsc --module CommonJS --moduleResolution node --outDir ./dist/cjs",
+    "build": "tsc",
     "clean": "rm -rf dist",
     "prepare": "npm run clean && npm run build",
     "test": "jest",

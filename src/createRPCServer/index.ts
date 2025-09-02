@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 import { BlankEnv, BlankSchema, Env, Schema } from 'hono/types';
 import { generateSchema } from '../generateSchema/index.js';
 import { IMethods, TMethod } from './types.js';
@@ -12,7 +12,8 @@ export const createRPCServer = <
   projectRoot: string,
   sourceFilePath: string,
   app: Hono<E, S, BasePath>,
-  rpcMethods: IMethods
+  rpcMethods: IMethods,
+  applyParamsToMethodWithContext?: (fn: TMethod, params: unknown[], c: Context<E, '/**', S>) => Promise<void>
 ): void => {
   // Эндпоинт для получения схемы
   app.get('/types', async (c) => {
@@ -45,7 +46,9 @@ export const createRPCServer = <
     }
 
     try {
-      const result = await func(...params);
+      const result = applyParamsToMethodWithContext
+        ? await applyParamsToMethodWithContext(func, params, c)
+        : await func(...params);
       return c.json({ result });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 400);

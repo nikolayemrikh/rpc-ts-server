@@ -1,12 +1,17 @@
 import { Hono } from 'hono';
+import { BlankEnv, BlankSchema, Env, Schema } from 'hono/types';
 import { generateSchema } from '../generateSchema/index.js';
 import { IMethods, TMethod } from './types.js';
 
-export const createRPCServer = (
+export const createRPCServer = <
+  E extends Env = BlankEnv,
+  S extends Schema = BlankSchema,
+  BasePath extends string = '/',
+>(
   tsConfigPath: string,
   projectRoot: string,
   sourceFilePath: string,
-  app: Hono,
+  app: Hono<E, S, BasePath>,
   rpcMethods: IMethods
 ): void => {
   // Эндпоинт для получения схемы
